@@ -146,7 +146,7 @@ class MediaLibrary:
                         if q_word == n_word:
                             word_matches += 1
                             break
-                        elif q_word in n_word or n_word in q_word:
+                        elif len(q_word) >= 3 and len(n_word) >= 3 and (q_word in n_word or n_word in q_word):
                             word_matches += 0.5
                             break
                 

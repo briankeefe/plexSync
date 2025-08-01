@@ -87,7 +87,7 @@ def fuzzy_search_files(files: List[Any], query: str, max_results: int = 20) -> L
                     if q_word == n_word:  # Exact word match
                         word_matches += 1
                         break
-                    elif q_word in n_word or n_word in q_word:  # Partial word match
+                    elif len(q_word) >= 3 and len(n_word) >= 3 and (q_word in n_word or n_word in q_word):  # Partial word match (min 3 chars)
                         word_matches += 0.5
                         break
             
@@ -152,7 +152,7 @@ def fuzzy_search_media_items(items: List[Any], query: str, max_results: int = 20
                     if q_word == t_word:  # Exact word match
                         word_matches += 1
                         break
-                    elif q_word in t_word or t_word in q_word:  # Partial word match
+                    elif len(q_word) >= 3 and len(t_word) >= 3 and (q_word in t_word or t_word in q_word):  # Partial word match (min 3 chars)
                         word_matches += 0.5
                         break
             

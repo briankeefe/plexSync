@@ -1058,7 +1058,7 @@ class EnhancedSearchInterface:
                 word_matches = 0
                 for q_word in query_words:
                     for t_word in title_words:
-                        if q_word in t_word or t_word in q_word:
+                        if len(q_word) >= 3 and len(t_word) >= 3 and (q_word in t_word or t_word in q_word):
                             word_matches += 1
                             break
                 
@@ -1114,7 +1114,7 @@ class EnhancedSearchInterface:
                 word_matches = 0
                 for q_word in query_words:
                     for s_word in show_words:
-                        if q_word in s_word or s_word in q_word:
+                        if len(q_word) >= 3 and len(s_word) >= 3 and (q_word in s_word or s_word in q_word):
                             word_matches += 1
                             break
                 
