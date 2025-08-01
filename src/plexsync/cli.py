@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.align import Align
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from .settings_manager import get_settings_manager
 from typing import Optional, List
 
 from . import __version__
@@ -35,8 +36,12 @@ from .progress import ProgressTracker, SyncProgress
 console = Console()
 
 
-def show_banner():
-    """Display the PlexSync banner."""
+def show_banner(show_first_time_tips: bool = None):
+    """Display the PlexSync banner.
+    
+    Args:
+        show_first_time_tips: If True, show first-time user tips. If None, auto-detect.
+    """
     banner_text = """
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                              ║
@@ -60,6 +65,52 @@ def show_banner():
         console.print("Interactive Media Synchronization", style="dim")
     
     console.print(f"Version: {__version__}", style="dim")
+    console.print()
+    
+    # Show first-time user tips if requested or auto-detected
+    if show_first_time_tips is None:
+        show_first_time_tips = _is_first_time_user()
+    
+    if show_first_time_tips:
+        _show_first_time_tips()
+
+
+def _is_first_time_user() -> bool:
+    """Detect if this is a first-time user.
+    
+    Returns:
+        True if no configuration exists, False otherwise
+    """
+    try:
+        from .config import get_config_manager
+        config_manager = get_config_manager()
+        return not os.path.exists(config_manager.config_file)
+    except Exception:
+        return True
+
+
+def _show_first_time_tips():
+    """Show helpful tips for first-time users."""
+    tips_text = """
+🌟 New to PlexSync? Get started quickly:
+
+   • Run 'plexsync --setup-wizard' for guided configuration
+   • Use 'plexsync --help' to see all available commands
+   • Check 'plexsync --check-env' to validate your system
+
+💡 The setup wizard will help you configure media sources and destinations
+   in just a few minutes!
+    """.strip()
+    
+    from rich.panel import Panel
+    panel = Panel(
+        tips_text,
+        title="[bold green]Getting Started[/bold green]",
+        border_style="green",
+        padding=(1, 2)
+    )
+    
+    console.print(panel)
     console.print()
 
 
@@ -317,10 +368,11 @@ Purpose: {spec.purpose}
 @click.option('--version', is_flag=True, help='Show version and exit')
 @click.option('--check-compat', is_flag=True, help='Check system compatibility and exit')
 @click.option('--check-env', is_flag=True, help='Check environment readiness and exit')
+@click.option('--setup-wizard', is_flag=True, help='Run interactive first-time setup wizard')
 @click.option('--plain', is_flag=True, help='Use plain text output (no colors/formatting)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
-def main(ctx, version, check_compat, check_env, plain, verbose):
+def main(ctx, version, check_compat, check_env, setup_wizard, plain, verbose):
     """
     PlexSync - Interactive media synchronization tool.
     
@@ -371,6 +423,38 @@ def main(ctx, version, check_compat, check_env, plain, verbose):
         else:
             console.print("✅ Environment is ready for operation", style="bold green")
             sys.exit(0)
+    
+    # Handle setup wizard flag
+    if setup_wizard:
+        show_banner()
+        console.print("🚀 Starting PlexSync Setup Wizard", style="bold green")
+        console.print("   This wizard will guide you through the initial configuration process.")
+        console.print()
+        
+        try:
+            from .setup_wizard import SetupWizard
+            wizard = SetupWizard(console=console, verbose=verbose)
+            success = wizard.run()
+            
+            if success:
+                console.print("✅ Setup completed successfully!", style="bold green")
+                console.print("   You can now run 'plexsync' to start syncing media.")
+                sys.exit(0)
+            else:
+                console.print("❌ Setup was not completed", style="bold red")
+                console.print("   You can run 'plexsync --setup-wizard' again to retry.")
+                sys.exit(1)
+                
+        except ImportError:
+            console.print("❌ Setup wizard is not available", style="bold red")
+            console.print("   Please check your PlexSync installation.")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"❌ Setup wizard encountered an error: {e}", style="bold red")
+            if verbose:
+                import traceback
+                console.print(traceback.format_exc())
+            sys.exit(1)
     
     # If no subcommand provided, default to sync command (interactive mode)
     if ctx.invoked_subcommand is None:
@@ -1869,6 +1953,522 @@ def downloaded(ctx, movies, tv, search, orphaned, interactive):
     except Exception as e:
         console.print(f"❌ Error accessing downloaded media: {e}", style="red")
         console.print("💡 Make sure your sync directory is accessible and contains media files")
+
+
+@main.group()
+@click.pass_context
+def system(ctx):
+    """
+    System management and advanced tools.
+    
+    Provides comprehensive system settings management, health diagnostics,
+    maintenance tools, and advanced configuration options for PlexSync.
+    
+    \b
+    plexsync system settings     Manage system settings
+    plexsync system health       System health diagnostics
+    plexsync system cache        Cache management tools
+    plexsync system logs         Log management tools
+    plexsync system backup       Configuration backup/restore
+    """
+    pass
+
+
+@system.group()
+@click.pass_context  
+def settings(ctx):
+    """
+    Manage PlexSync system settings.
+    
+    System settings control application behavior, UI preferences,
+    performance options, and default paths. These are separate
+    from profile-specific configuration.
+    
+    \b
+    plexsync system settings list       Show all settings
+    plexsync system settings get KEY    Get specific setting
+    plexsync system settings set KEY VALUE   Set specific setting
+    plexsync system settings reset     Reset to defaults
+    plexsync system settings export    Export settings to file
+    plexsync system settings import    Import settings from file
+    """
+    pass
+
+
+@settings.command('list')
+@click.option('--category', help='Filter by category (ui, performance, paths, logging, security)')
+@click.option('--format', 'output_format', type=click.Choice(['table', 'yaml', 'json']), 
+              default='table', help='Output format')
+@click.pass_context
+def list_settings(ctx, category, output_format):
+    """Show all system settings."""
+    from .settings_manager import get_settings_manager
+    
+    console.print("⚙️  System Settings", style="bold blue")
+    console.print()
+    
+    settings_manager = get_settings_manager()
+    all_settings = settings_manager.get_all_settings()
+    
+    # Filter by category if specified
+    if category:
+        filtered_settings = {k: v for k, v in all_settings.items() if k.startswith(f"{category}.")}
+        if not filtered_settings:
+            console.print(f"❌ No settings found for category: {category}", style="red")
+            console.print("Available categories: ui, performance, paths, logging, security")
+            return
+        all_settings = filtered_settings
+    
+    if output_format == 'table':
+        # Create settings table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Setting", style="cyan", width=30)
+        table.add_column("Value", style="green", width=20)
+        table.add_column("Type", style="yellow", width=10)
+        table.add_column("Description", style="dim", width=40)
+        
+        # Setting descriptions
+        descriptions = {
+            'ui.theme': 'UI color theme (auto, light, dark)',
+            'ui.color_output': 'Enable colored console output',
+            'ui.progress_bars': 'Show progress bars during operations',
+            'ui.banner_display': 'Show PlexSync banner on startup',
+            'ui.table_style': 'Table display style',
+            'ui.confirmation_prompts': 'Show confirmation prompts',
+            'performance.max_workers': 'Maximum parallel workers',
+            'performance.cache_enabled': 'Enable result caching',
+            'performance.cache_ttl_seconds': 'Cache time-to-live in seconds',
+            'performance.health_check_timeout': 'Health check timeout in seconds',
+            'performance.mount_check_timeout': 'Mount check timeout in seconds',
+            'performance.default_bandwidth_limit': 'Default bandwidth limit (0=unlimited)',
+            'performance.parallel_health_checks': 'Run health checks in parallel',
+            'paths.config_dir': 'Configuration directory path',
+            'paths.cache_dir': 'Cache directory path',
+            'paths.log_dir': 'Log directory path',
+            'paths.backup_dir': 'Backup directory path',
+            'paths.temp_dir': 'Temporary files directory path',
+            'logging.level': 'Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)',
+            'logging.file_logging': 'Enable logging to file',
+            'logging.console_logging': 'Enable console logging',
+            'logging.max_file_size_mb': 'Maximum log file size in MB',
+            'logging.backup_count': 'Number of log backup files to keep',
+            'logging.format_string': 'Log message format string',
+            'security.path_redaction': 'Redact sensitive paths in logs',
+            'security.encrypt_backups': 'Encrypt configuration backups',
+            'security.secure_credential_storage': 'Use secure credential storage',
+            'security.auto_update_checks': 'Check for updates automatically',
+            'security.anonymous_usage_stats': 'Send anonymous usage statistics'
+        }
+        
+        for key, value in sorted(all_settings.items()):
+            value_str = str(value)
+            if len(value_str) > 18:
+                value_str = value_str[:15] + "..."
+            
+            value_type = type(value).__name__
+            description = descriptions.get(key, "")
+            
+            table.add_row(key, value_str, value_type, description)
+        
+        console.print(table)
+        console.print()
+        console.print(f"📊 Total settings: {len(all_settings)}")
+        
+    elif output_format == 'yaml':
+        import yaml
+        console.print(yaml.dump(all_settings, default_flow_style=False, indent=2))
+        
+    elif output_format == 'json':
+        import json
+        console.print(json.dumps(all_settings, indent=2))
+
+
+@settings.command('get')
+@click.argument('key')
+@click.pass_context
+def get_setting(ctx, key):
+    """Get a specific setting value."""
+    from .settings_manager import get_settings_manager
+    
+    settings_manager = get_settings_manager()
+    value = settings_manager.get_setting(key)
+    
+    if value is None:
+        console.print(f"❌ Setting not found: {key}", style="red")
+        console.print("💡 Use 'plexsync system settings list' to see available settings")
+        return
+    
+    console.print(f"⚙️  Setting: [cyan]{key}[/cyan]")
+    console.print(f"📄 Value: [green]{value}[/green]")
+    console.print(f"📋 Type: [yellow]{type(value).__name__}[/yellow]")
+
+
+@settings.command('set')
+@click.argument('key')
+@click.argument('value')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def set_setting(ctx, key, value, confirm):
+    """Set a specific setting value."""
+    from .settings_manager import get_settings_manager
+    
+    settings_manager = get_settings_manager()
+    
+    # Get current value for comparison
+    current_value = settings_manager.get_setting(key)
+    if current_value is None:
+        console.print(f"❌ Setting not found: {key}", style="red")
+        console.print("💡 Use 'plexsync system settings list' to see available settings")
+        return
+    
+    # Convert value to appropriate type
+    try:
+        # Handle boolean values
+        if isinstance(current_value, bool):
+            if value.lower() in ('true', '1', 'yes', 'on'):
+                typed_value = True
+            elif value.lower() in ('false', '0', 'no', 'off'):
+                typed_value = False
+            else:
+                raise ValueError(f"Invalid boolean value: {value}")
+        
+        # Handle integer values
+        elif isinstance(current_value, int):
+            typed_value = int(value)
+        
+        # Handle float values
+        elif isinstance(current_value, float):
+            typed_value = float(value)
+        
+        # Handle string values (default)
+        else:
+            typed_value = value
+            
+    except ValueError as e:
+        console.print(f"❌ Invalid value format: {e}", style="red")
+        return
+    
+    # Show change preview
+    console.print("🔄 Setting Change Preview:", style="bold yellow")
+    console.print(f"  Setting: [cyan]{key}[/cyan]")
+    console.print(f"  Current: [dim]{current_value}[/dim]")
+    console.print(f"  New:     [green]{typed_value}[/green]")
+    console.print()
+    
+    # Confirm change
+    if not confirm:
+        from rich.prompt import Confirm
+        if not Confirm.ask("Apply this change?", default=True):
+            console.print("❌ Change cancelled", style="yellow")
+            return
+    
+    # Apply setting
+    if settings_manager.set_setting(key, typed_value):
+        if settings_manager.save_settings():
+            console.print(f"✅ Setting '{key}' updated successfully", style="green")
+        else:
+            console.print("❌ Failed to save settings", style="red")
+    else:
+        console.print(f"❌ Failed to update setting '{key}'", style="red")
+
+
+@settings.command('reset')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def reset_settings(ctx, confirm):
+    """Reset all settings to defaults."""
+    from .settings_manager import get_settings_manager
+    
+    console.print("⚠️  Reset All Settings", style="bold red")
+    console.print("This will reset ALL system settings to their default values.")
+    console.print("Your profile configurations will NOT be affected.")
+    console.print()
+    
+    if not confirm:
+        from rich.prompt import Confirm
+        if not Confirm.ask("Are you sure you want to reset all settings?", default=False):
+            console.print("❌ Reset cancelled", style="yellow")
+            return
+    
+    settings_manager = get_settings_manager()
+    if settings_manager.reset_settings():
+        console.print("✅ All settings reset to defaults", style="green")
+    else:
+        console.print("❌ Failed to reset settings", style="red")
+
+
+@settings.command('export')
+@click.argument('file_path', required=False)
+@click.option('--format', 'export_format', type=click.Choice(['yaml', 'json']), 
+              default='yaml', help='Export format')
+@click.pass_context
+def export_settings(ctx, file_path, export_format):
+    """Export settings to a file."""
+    from .settings_manager import get_settings_manager
+    import time
+    
+    if not file_path:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        file_path = f"plexsync_settings_{timestamp}.{export_format}"
+    
+    settings_manager = get_settings_manager()
+    
+    if settings_manager.export_settings(file_path):
+        console.print(f"✅ Settings exported to: [cyan]{file_path}[/cyan]", style="green")
+        
+        # Show file info
+        if os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+            console.print(f"📊 File size: {file_size} bytes")
+    else:
+        console.print(f"❌ Failed to export settings to: {file_path}", style="red")
+
+
+@settings.command('import')
+@click.argument('file_path')
+@click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def import_settings(ctx, file_path, confirm):
+    """Import settings from a file."""
+    from .settings_manager import get_settings_manager
+    
+    if not os.path.exists(file_path):
+        console.print(f"❌ File not found: {file_path}", style="red")
+        return
+    
+    console.print("📥 Import Settings", style="bold blue")
+    console.print(f"Source file: [cyan]{file_path}[/cyan]")
+    console.print()
+    console.print("⚠️  This will replace your current system settings.")
+    console.print("Your profile configurations will NOT be affected.")
+    console.print()
+    
+    if not confirm:
+        from rich.prompt import Confirm
+        if not Confirm.ask("Continue with import?", default=False):
+            console.print("❌ Import cancelled", style="yellow")
+            return
+    
+    settings_manager = get_settings_manager() 
+    if settings_manager.import_settings(file_path):
+        console.print("✅ Settings imported successfully", style="green")
+        console.print("💡 Use 'plexsync system settings list' to verify imported settings")
+    else:
+        console.print("❌ Failed to import settings", style="red")
+
+
+@system.command()
+@click.option('--category', type=click.Choice(['connectivity', 'filesystem', 'configuration', 'dependencies', 'performance']),
+              help='Filter checks by category')
+@click.option('--severity', type=click.Choice(['1', '2', '3', '4']), help='Filter by minimum severity level')
+@click.option('--format', 'output_format', type=click.Choice(['table', 'json']), default='table', help='Output format')
+@click.option('--parallel/--sequential', default=None, help='Run checks in parallel or sequential mode')
+@click.option('--timeout', type=int, help='Timeout for individual checks in seconds')
+@click.pass_context
+def health(ctx, category, severity, output_format, parallel, timeout):
+    """
+    Run comprehensive system health diagnostics.
+    
+    Performs health checks across multiple categories to identify
+    potential issues and provide actionable feedback for troubleshooting.
+    
+    Categories:
+    - connectivity: Network and mount connectivity
+    - filesystem: Disk space, permissions, path accessibility  
+    - configuration: Config and settings validation
+    - dependencies: Python version, packages, system binaries
+    - performance: System resources and I/O performance
+    """
+    from .health_checker import get_health_checker, HealthCategory, HealthStatus
+    
+    console.print("🏥 System Health Diagnostics", style="bold green")
+    console.print()
+    
+    # Parse category filter
+    categories = None
+    if category:
+        categories = [HealthCategory(category)]
+    
+    # Set timeout if specified
+    if timeout:
+        settings_manager = get_settings_manager()
+        settings_manager.settings.performance.health_check_timeout = timeout
+    
+    # Run health checks
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True
+    ) as progress:
+        task = progress.add_task("Running health checks...", total=None)
+        
+        health_checker = get_health_checker()
+        report = health_checker.run_all_checks(categories=categories, parallel=parallel)
+        
+        progress.update(task, completed=100)
+    
+    console.print()
+    
+    if output_format == 'json':
+        import json
+        # Convert report to JSON-serializable format  
+        json_data = {
+            'overall_health': report.overall_health.value,
+            'health_percentage': report.health_percentage,
+            'total_checks': report.total_checks,
+            'healthy_count': report.healthy_count,
+            'warning_count': report.warning_count,
+            'critical_count': report.critical_count,
+            'unknown_count': report.unknown_count,
+            'total_duration_ms': report.total_duration_ms,
+            'timestamp': report.timestamp,
+            'results': [
+                {
+                    'name': result.name,
+                    'category': result.category.value,
+                    'status': result.status.value,
+                    'message': result.message,
+                    'details': result.details,
+                    'fix_suggestion': result.fix_suggestion,
+                    'check_duration_ms': result.check_duration_ms,
+                    'severity': result.severity
+                }
+                for result in report.results
+            ]
+        }
+        console.print(json.dumps(json_data, indent=2))
+        return
+    
+    # Display results in table format
+    
+    # Overall health status
+    if report.overall_health == HealthStatus.HEALTHY:
+        status_color = "green"
+        status_icon = "✅"
+    elif report.overall_health == HealthStatus.WARNING:
+        status_color = "yellow"
+        status_icon = "⚠️"
+    elif report.overall_health == HealthStatus.CRITICAL:
+        status_color = "red"
+        status_icon = "❌"
+    else:
+        status_color = "dim"
+        status_icon = "❓"
+    
+    console.print(f"🎯 Overall Health: [{status_color}]{status_icon} {report.overall_health.value.upper()}[/{status_color}]", style="bold")
+    console.print(f"📊 Health Score: {report.health_percentage:.1f}% ({report.healthy_count}/{report.total_checks} checks passing)")
+    console.print(f"⏱️  Total Duration: {report.total_duration_ms:.1f}ms")
+    console.print()
+    
+    # Filter results by severity if specified
+    filtered_results = report.results
+    if severity:
+        min_severity = int(severity)
+        filtered_results = [r for r in report.results if r.severity >= min_severity]
+    
+    if not filtered_results:
+        console.print("No health checks match the specified filters.", style="dim")
+        return
+    
+    # Create health results table
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Check", style="cyan", width=25)
+    table.add_column("Category", style="blue", width=12)
+    table.add_column("Status", width=12)
+    table.add_column("Message", style="dim", width=40)
+    table.add_column("Duration", style="yellow", width=8)
+    
+    for result in filtered_results:
+        # Status with color and icon
+        if result.status == HealthStatus.HEALTHY:
+            status_display = "[green]✅ HEALTHY[/green]"
+        elif result.status == HealthStatus.WARNING:
+            status_display = "[yellow]⚠️  WARNING[/yellow]"
+        elif result.status == HealthStatus.CRITICAL:
+            status_display = "[red]❌ CRITICAL[/red]"
+        else:
+            status_display = "[dim]❓ UNKNOWN[/dim]"
+        
+        # Duration
+        duration_str = f"{result.check_duration_ms:.0f}ms" if result.check_duration_ms else "N/A"
+        
+        # Truncate long messages
+        message = result.message
+        if len(message) > 38:
+            message = message[:35] + "..."
+        
+        table.add_row(
+            result.name,
+            result.category.value.title(),
+            status_display,
+            message,
+            duration_str
+        )
+    
+    console.print(table)
+    console.print()
+    
+    # Show summary by category
+    console.print("📋 Summary by Category:", style="bold blue")
+    categories_summary = {}
+    for result in report.results:
+        cat = result.category.value
+        if cat not in categories_summary:
+            categories_summary[cat] = {'healthy': 0, 'warning': 0, 'critical': 0, 'unknown': 0}
+        
+        if result.status == HealthStatus.HEALTHY:
+            categories_summary[cat]['healthy'] += 1
+        elif result.status == HealthStatus.WARNING:
+            categories_summary[cat]['warning'] += 1
+        elif result.status == HealthStatus.CRITICAL:
+            categories_summary[cat]['critical'] += 1
+        else:
+            categories_summary[cat]['unknown'] += 1
+    
+    for category, counts in sorted(categories_summary.items()):
+        total = sum(counts.values())
+        healthy_pct = (counts['healthy'] / total * 100) if total > 0 else 0
+        
+        if counts['critical'] > 0:
+            category_color = "red"
+        elif counts['warning'] > 0:
+            category_color = "yellow"  
+        else:
+            category_color = "green"
+        
+        console.print(f"  [{category_color}]{category.title()}[/{category_color}]: "
+                     f"{counts['healthy']}/{total} healthy ({healthy_pct:.0f}%)")
+    
+    console.print()
+    
+    # Show issues that need attention
+    issues = [r for r in report.results if r.needs_attention]
+    if issues:
+        console.print("🔧 Issues Requiring Attention:", style="bold red")
+        for issue in issues:
+            severity_indicator = "🔴" if issue.status == HealthStatus.CRITICAL else "🟡"
+            console.print(f"  {severity_indicator} {issue.name}: {issue.message}")
+            if issue.fix_suggestion:
+                console.print(f"     💡 {issue.fix_suggestion}", style="dim")
+        console.print()
+    
+    # Show performance summary
+    perf_results = [r for r in report.results if r.category == HealthCategory.PERFORMANCE]
+    if perf_results:
+        console.print("⚡ Performance Summary:", style="bold cyan")
+        for result in perf_results:
+            if result.details:
+                console.print(f"  {result.name}: {result.details}")
+        console.print()
+    
+    # Final recommendations
+    if report.overall_health == HealthStatus.CRITICAL:
+        console.print("🚨 Action Required: Critical issues detected that may prevent proper operation.", style="bold red")
+    elif report.overall_health == HealthStatus.WARNING:
+        console.print("⚠️  Attention Recommended: Some issues detected that may affect performance.", style="bold yellow")
+    else:
+        console.print("✅ System appears healthy and ready for operation.", style="bold green")
 
 
 if __name__ == "__main__":
