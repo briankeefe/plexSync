@@ -136,6 +136,50 @@ class SecuritySettings:
     secure_credential_storage: bool = True
     auto_update_checks: bool = True
     anonymous_usage_stats: bool = False
+
+
+@dataclass
+class QuickStartPreferences:
+    """Quick start mode preferences and learned behavior."""
+    last_source_path: Optional[str] = None
+    last_destination_path: Optional[str] = None
+    last_success_timestamp: Optional[float] = None
+    preferred_media_type: Optional[str] = None
+    successful_completion_count: int = 0
+    average_completion_time_seconds: Optional[float] = None
+    last_mount_point: Optional[str] = None
+    skip_plex_validation: bool = False
+    
+    def record_success(self, source_path: str, destination_path: str, 
+                      completion_time_seconds: float, media_type: Optional[str] = None):
+        """Record a successful quick start completion."""
+        import time
+        
+        self.last_source_path = source_path
+        self.last_destination_path = destination_path
+        self.last_success_timestamp = time.time()
+        self.successful_completion_count += 1
+        
+        if media_type:
+            self.preferred_media_type = media_type
+            
+        # Update average completion time
+        if self.average_completion_time_seconds is None:
+            self.average_completion_time_seconds = completion_time_seconds
+        else:
+            # Weighted average favoring recent completions
+            weight = 0.3
+            self.average_completion_time_seconds = (
+                (1 - weight) * self.average_completion_time_seconds + 
+                weight * completion_time_seconds
+            )
+    
+    def get_success_rate_estimate(self) -> float:
+        """Get estimated success rate based on completion history."""
+        if self.successful_completion_count == 0:
+            return 0.0
+        # Simple heuristic - more completions = higher confidence
+        return min(0.95, 0.5 + (self.successful_completion_count * 0.1))
     
     
 @dataclass
@@ -146,6 +190,7 @@ class SystemSettings:
     paths: PathSettings = field(default_factory=PathSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     security: SecuritySettings = field(default_factory=SecuritySettings)
+    quick_start: QuickStartPreferences = field(default_factory=QuickStartPreferences)
     
     def validate(self) -> List[str]:
         """Validate the settings and return any errors."""

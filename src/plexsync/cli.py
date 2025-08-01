@@ -369,10 +369,11 @@ Purpose: {spec.purpose}
 @click.option('--check-compat', is_flag=True, help='Check system compatibility and exit')
 @click.option('--check-env', is_flag=True, help='Check environment readiness and exit')
 @click.option('--setup-wizard', is_flag=True, help='Run interactive first-time setup wizard')
+@click.option('--quick-start', is_flag=True, help='Launch simplified quick start mode for immediate sync')
 @click.option('--plain', is_flag=True, help='Use plain text output (no colors/formatting)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
-def main(ctx, version, check_compat, check_env, setup_wizard, plain, verbose):
+def main(ctx, version, check_compat, check_env, setup_wizard, quick_start, plain, verbose):
     """
     PlexSync - Interactive media synchronization tool.
     
@@ -455,6 +456,49 @@ def main(ctx, version, check_compat, check_env, setup_wizard, plain, verbose):
                 import traceback
                 console.print(traceback.format_exc())
             sys.exit(1)
+    
+    # Handle quick start flag
+    if quick_start:
+        show_banner()
+        console.print("⚡ Starting PlexSync Quick Start Mode", style="bold green")
+        console.print("   Get syncing in under 2 minutes with smart auto-detection!")
+        console.print()
+        
+        try:
+            from .quick_start import QuickStartManager
+            quick_start_manager = QuickStartManager(console=console, verbose=verbose)
+            success = quick_start_manager.run()
+            
+            if success:
+                console.print("✅ Quick start completed successfully!", style="bold green")
+                console.print("   Your media is now syncing! Use 'plexsync' to access more features.")
+                sys.exit(0)
+            else:
+                console.print("ℹ️  Quick start handed off to setup wizard", style="bold blue")
+                console.print("   Complete the setup process to start syncing.")
+                sys.exit(0)
+                
+        except ImportError as e:
+            console.print("❌ Quick start is not available", style="bold red")
+            console.print(f"   Import error: {e}")
+            console.print("   Please check your PlexSync installation or try --setup-wizard.")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"❌ Quick start encountered an error: {e}", style="bold red")
+            if verbose:
+                import traceback
+                console.print(traceback.format_exc())
+            console.print("   Falling back to setup wizard...")
+            
+            # Fallback to setup wizard
+            try:
+                from .setup_wizard import SetupWizard
+                wizard = SetupWizard(console=console, verbose=verbose)
+                success = wizard.run()
+                sys.exit(0 if success else 1)
+            except Exception as fallback_error:
+                console.print(f"❌ Fallback to setup wizard also failed: {fallback_error}", style="bold red")
+                sys.exit(1)
     
     # If no subcommand provided, default to sync command (interactive mode)
     if ctx.invoked_subcommand is None:
