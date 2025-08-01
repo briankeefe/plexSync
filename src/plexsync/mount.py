@@ -79,8 +79,8 @@ class MountManager:
         mount_points = []
         
         try:
-            # Get mount information from psutil
-            for partition in psutil.disk_partitions():
+            # Get mount information from psutil (all=True to include network mounts)
+            for partition in psutil.disk_partitions(all=True):
                 mount_point = self._create_mount_point(partition)
                 if mount_point:
                     mount_points.append(mount_point)
@@ -242,7 +242,7 @@ class MountManager:
             # Use stat to find the device
             path_stat = os.stat(path)
             
-            for partition in psutil.disk_partitions():
+            for partition in psutil.disk_partitions(all=True):
                 try:
                     mount_stat = os.stat(partition.mountpoint)
                     if path_stat.st_dev == mount_stat.st_dev:
@@ -433,6 +433,123 @@ class AutoMounter:
         cmd.extend([device, path])
         
         return cmd
+
+
+def check_and_mount_media_folders() -> bool:
+    """Check if /mnt/media folders are mounted and mount them if needed."""
+    import glob
+    
+    logger.info("Checking /mnt/media mount points...")
+    
+    # Find all /mnt/media* directories and subdirectories
+    media_mount_points = []
+    
+    # Check /mnt/media* top-level directories
+    top_level_paths = glob.glob("/mnt/media*")
+    
+    # Also check subdirectories under /mnt/media/ (common pattern)
+    if os.path.exists("/mnt/media"):
+        subdirs = glob.glob("/mnt/media/*")
+        subdirs = [d for d in subdirs if os.path.isdir(d)]
+        
+        # If we have subdirectories under /mnt/media, prefer those over /mnt/media itself
+        # This handles the common case where /mnt/media is just a container directory
+        if subdirs:
+            media_mount_points.extend(subdirs)
+            # Only include /mnt/media if it looks like it might be a mount point itself
+            # (i.e., if it has content but no subdirectories, or if explicitly configured)
+        else:
+            # No subdirectories, so /mnt/media itself might be the mount point
+            media_mount_points.extend(top_level_paths)
+    else:
+        # No /mnt/media directory, check top-level paths
+        media_mount_points.extend(top_level_paths)
+    
+    if not media_mount_points:
+        logger.info("No /mnt/media directories found")
+        return True
+    
+    logger.info(f"Found {len(media_mount_points)} media directories to check: {media_mount_points}")
+    
+    mount_manager = get_mount_manager()
+    mount_manager.discover_mounts()
+    
+    # Check each media mount point
+    unmounted_paths = []
+    degraded_paths = []
+    
+    for mount_path in media_mount_points:
+        if not os.path.exists(mount_path):
+            continue
+            
+        mount_point = mount_manager.check_mount_health(mount_path)
+        
+        if mount_point.status == MountStatus.UNAVAILABLE:
+            logger.warning(f"Mount point {mount_path} is not available: {mount_point.error_message}")
+            unmounted_paths.append(mount_path)
+        elif mount_point.status == MountStatus.DEGRADED:
+            logger.warning(f"Mount point {mount_path} is degraded: {mount_point.error_message}")
+            degraded_paths.append(mount_path)
+        else:
+            logger.info(f"Mount point {mount_path} is healthy")
+    
+    # If we have unmounted paths, try to mount them
+    if unmounted_paths:
+        logger.info(f"Found {len(unmounted_paths)} unmounted media folders, attempting to mount...")
+        
+        try:
+            # First try mount -a without sudo to see if it works
+            result = subprocess.run(
+                ["mount", "-a"],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            # If that fails, try with sudo
+            if result.returncode != 0:
+                logger.info("Trying with sudo...")
+                result = subprocess.run(
+                    ["sudo", "mount", "-a"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+            
+            if result.returncode == 0:
+                logger.info("Successfully ran mount -a")
+                
+                # Re-check mount status after mounting
+                mount_manager.discover_mounts()
+                still_unmounted = []
+                
+                for mount_path in unmounted_paths:
+                    mount_point = mount_manager.check_mount_health(mount_path)
+                    if mount_point.status == MountStatus.UNAVAILABLE:
+                        still_unmounted.append(mount_path)
+                
+                if still_unmounted:
+                    logger.warning(f"Some mount points still unavailable after mount -a: {still_unmounted}")
+                    return False
+                else:
+                    logger.info("All /mnt/media mount points are now available")
+                    return True
+            else:
+                logger.error(f"Failed to run mount -a: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout while running mount -a")
+            return False
+        except Exception as e:
+            logger.error(f"Error running mount -a: {e}")
+            return False
+    else:
+        if degraded_paths:
+            logger.warning(f"All media mount points are accessible but {len(degraded_paths)} are degraded")
+        else:
+            logger.info("All /mnt/media mount points are healthy")
+        return True
 
 
 def get_mount_manager() -> MountManager:

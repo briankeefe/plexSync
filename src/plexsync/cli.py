@@ -24,7 +24,7 @@ from .datasets import (
     get_default_media_sources, TestDatasetSize, TEST_DATASETS
 )
 from .interactive import InteractiveSyncManager
-from .mount import get_mount_manager, MountStatus
+from .mount import get_mount_manager, MountStatus, check_and_mount_media_folders
 from .environment import validate_environment, CheckStatus
 from .config import get_config_manager, get_active_config
 from .sync import SyncEngine, SyncOptions, SyncStatus
@@ -376,6 +376,16 @@ def main(ctx, version, check_compat, check_env, plain, verbose):
     if ctx.invoked_subcommand is None:
         show_banner()
         
+        # Check and mount /mnt/media folders early in startup
+        console.print("🔍 Checking media mount points...", style="dim")
+        mount_success = check_and_mount_media_folders()
+        if not mount_success:
+            console.print("⚠️  Some media mount points are unavailable", style="yellow")
+            console.print("   Continuing with available mount points...", style="dim")
+        else:
+            console.print("✅ Media mount points are ready", style="dim")
+        console.print()
+        
         # Quick compatibility check
         is_compatible, errors = CompatibilityMatrix.validate_environment()
         
@@ -423,6 +433,16 @@ def main(ctx, version, check_compat, check_env, plain, verbose):
 def discover(ctx, rescan, sources, workers, clear_cache):
     """Discover and catalog media from configured sources."""
     console.print("🔍 Media Discovery", style="bold green")
+    console.print()
+    
+    # Check and mount /mnt/media folders before discovery
+    console.print("📡 Checking media mount points...", style="dim")
+    mount_success = check_and_mount_media_folders()
+    if not mount_success:
+        console.print("⚠️  Some media mount points are unavailable", style="yellow")
+        console.print("   Discovery will continue with available mount points...", style="dim")
+    else:
+        console.print("✅ All media mount points are ready", style="dim")
     console.print()
     
     # Load configuration
