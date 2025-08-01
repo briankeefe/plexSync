@@ -354,8 +354,13 @@ class DownloadedMediaBrowserInterface:
         # Group episodes by show and season
         shows_dict = {}
         for episode in episodes:
-            show_name = episode.show_name if hasattr(episode, 'show_name') else "Unknown Show"
-            season_num = getattr(episode, 'season', 0) or 0
+            # Get show name and season from matched_item if available
+            if episode.matched_item:
+                show_name = episode.matched_item.show_name or "Unknown Show"
+                season_num = episode.matched_item.season or 0
+            else:
+                show_name = "Unknown Show"
+                season_num = 0
             
             if show_name not in shows_dict:
                 shows_dict[show_name] = {}
@@ -1190,13 +1195,16 @@ class DownloadedMediaBrowserInterface:
             f"🔧 Status: {file.status.value.title()}",
         ]
         
-        # Add additional info if available
-        if hasattr(file, 'show_name'):
-            info_lines.insert(1, f"📺 Show: {file.show_name}")
-        if hasattr(file, 'season'):
-            info_lines.insert(2, f"📀 Season: {file.season}")
-        if hasattr(file, 'episode_number'):
-            info_lines.insert(3, f"🎬 Episode: {file.episode_number}")
+        # Add additional info if available from matched_item
+        if file.matched_item:
+            if file.matched_item.show_name:
+                info_lines.insert(1, f"📺 Show: {file.matched_item.show_name}")
+            if file.matched_item.season:
+                info_lines.insert(2, f"📀 Season: {file.matched_item.season}")
+            if file.matched_item.episode:
+                info_lines.insert(3, f"🎬 Episode: {file.matched_item.episode}")
+            if file.matched_item.episode_title:
+                info_lines.insert(4, f"🎭 Title: {file.matched_item.episode_title}")
         
         # File system info
         if file.file_path.exists():
