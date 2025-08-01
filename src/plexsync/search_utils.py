@@ -98,7 +98,7 @@ def fuzzy_search_files(files: List[Any], query: str, max_results: int = 20) -> L
         best_score = max(scores) if scores else 0
         
         # Only include if score is above threshold
-        if best_score >= 0.3:
+        if best_score >= 0.5:
             candidates.append((file, best_score, clean_name))
     
     # Sort by score (descending) and return top results
@@ -163,7 +163,7 @@ def fuzzy_search_media_items(items: List[Any], query: str, max_results: int = 20
         best_score = max(scores) if scores else 0
         
         # Only include if score is above threshold
-        if best_score >= 0.3:
+        if best_score >= 0.5:
             candidates.append((item, best_score))
     
     # Sort by score (descending) and return top results

@@ -154,7 +154,7 @@ class MediaLibrary:
                 scores.append(word_score)
             
             best_score = max(scores) if scores else 0
-            if best_score >= 0.3:
+            if best_score >= 0.5:
                 candidates.append((show_name, best_score))
         
         # Sort by score and return

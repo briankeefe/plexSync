@@ -1069,7 +1069,7 @@ class EnhancedSearchInterface:
             best_score = max(scores)
             
             # Only include if score is above threshold
-            if best_score >= 0.3:
+            if best_score >= 0.5:
                 candidates.append((movie, best_score))
         
         # Sort by score (descending) and return top results
@@ -1125,7 +1125,7 @@ class EnhancedSearchInterface:
             best_score = max(scores)
             
             # Only include if score is above threshold
-            if best_score >= 0.3:
+            if best_score >= 0.5:
                 candidates.append((show_name, best_score))
         
         # Sort by score (descending) and return top results
