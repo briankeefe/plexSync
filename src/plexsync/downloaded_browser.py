@@ -355,7 +355,7 @@ class DownloadedMediaBrowserInterface:
         shows_dict = {}
         for episode in episodes:
             show_name = episode.show_name if hasattr(episode, 'show_name') else "Unknown Show"
-            season_num = getattr(episode, 'season_number', 0) or 0
+            season_num = getattr(episode, 'season', 0) or 0
             
             if show_name not in shows_dict:
                 shows_dict[show_name] = {}
@@ -1193,8 +1193,8 @@ class DownloadedMediaBrowserInterface:
         # Add additional info if available
         if hasattr(file, 'show_name'):
             info_lines.insert(1, f"📺 Show: {file.show_name}")
-        if hasattr(file, 'season_number'):
-            info_lines.insert(2, f"📀 Season: {file.season_number}")
+        if hasattr(file, 'season'):
+            info_lines.insert(2, f"📀 Season: {file.season}")
         if hasattr(file, 'episode_number'):
             info_lines.insert(3, f"🎬 Episode: {file.episode_number}")
         
