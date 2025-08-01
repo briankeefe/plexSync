@@ -343,7 +343,7 @@ class DownloadedMediaBrowserInterface:
                 input("Press Enter to continue...")
     
     def browse_episodes(self, library: MediaLibrary):
-        """Browse downloaded TV episodes with multi-select functionality."""
+        """Browse downloaded TV episodes with hierarchical show/season grouping."""
         summary = self.manager.scanner.get_summary(library)
         episodes = summary.episodes
         
@@ -351,63 +351,238 @@ class DownloadedMediaBrowserInterface:
             self.console.print("❌ No TV episodes downloaded", style="red")
             return
         
-        # Group episodes by show
+        # Group episodes by show and season
         shows_dict = {}
         for episode in episodes:
             show_name = episode.show_name if hasattr(episode, 'show_name') else "Unknown Show"
+            season_num = getattr(episode, 'season_number', 0) or 0
+            
             if show_name not in shows_dict:
-                shows_dict[show_name] = []
-            shows_dict[show_name].append(episode)
+                shows_dict[show_name] = {}
+            if season_num not in shows_dict[show_name]:
+                shows_dict[show_name][season_num] = []
+            shows_dict[show_name][season_num].append(episode)
         
-        # Sort shows by name
+        # Sort shows by name and seasons by number
         sorted_shows = sorted(shows_dict.keys())
+        for show_name in shows_dict:
+            shows_dict[show_name] = dict(sorted(shows_dict[show_name].items()))
+        
+        # Start with show selection
+        self._browse_shows_hierarchical(shows_dict, episodes)
+    
+    def _browse_shows_hierarchical(self, shows_dict: Dict, all_episodes: List):
+        """Browse shows in hierarchical view."""
+        while True:
+            self.console.clear()
+            self.console.print()
+            self.console.print("📺 TV Shows - Hierarchical Browser", style="bold green")
+            self.console.print()
+            
+            # Show selection status if any
+            selected_count = len(self.selected_files)
+            if selected_count > 0:
+                selected_size = sum(
+                    episode.file_size 
+                    for episode in all_episodes 
+                    if str(episode.file_path) in self.selected_files
+                )
+                selected_size_gb = selected_size / (1024**3)
+                self.console.print(f"Selected: {selected_count} files • {selected_size_gb:.2f} GB", style="green")
+                self.console.print()
+            
+            # Create shows table
+            table = Table(show_header=True, header_style="bold blue")
+            table.add_column("#", width=3, justify="right")
+            table.add_column("Show", style="dim")
+            table.add_column("Seasons", justify="center")
+            table.add_column("Episodes", justify="center")
+            table.add_column("Total Size", justify="right")
+            
+            sorted_shows = sorted(shows_dict.keys())
+            
+            for i, show_name in enumerate(sorted_shows, 1):
+                seasons_data = shows_dict[show_name]
+                total_episodes = sum(len(episodes) for episodes in seasons_data.values())
+                total_size = sum(ep.file_size for episodes in seasons_data.values() for ep in episodes)
+                total_size_gb = total_size / (1024**3)
+                
+                table.add_row(
+                    str(i),
+                    show_name,
+                    str(len(seasons_data)),
+                    str(total_episodes),
+                    f"{total_size_gb:.2f} GB"
+                )
+            
+            self.console.print(table)
+            self.console.print()
+            
+            self.console.print("Navigation:", style="bold yellow")
+            self.console.print("• Enter show number to browse seasons/episodes")
+            self.console.print("• (s)earch shows • (a)ll episodes flat view • (q)uit to main menu")
+            self.console.print()
+            
+            command = Prompt.ask("Select show [1-{}] or command".format(len(sorted_shows)), default="").strip().lower()
+            
+            if command in ["q", "quit", "back", "b"]:
+                break
+            elif command == "s":
+                self._search_shows(shows_dict, all_episodes)
+            elif command == "a":
+                self._browse_all_episodes_flat(all_episodes)
+            elif command.isdigit():
+                num = int(command)
+                if 1 <= num <= len(sorted_shows):
+                    selected_show = sorted_shows[num - 1]
+                    self._browse_seasons_hierarchical(selected_show, shows_dict[selected_show], all_episodes)
+                else:
+                    self.console.print("❌ Invalid show number", style="red")
+                    input("Press Enter to continue...")
+            else:
+                if command:  # Only show error if they entered something
+                    self.console.print("❌ Invalid command", style="red")
+                    input("Press Enter to continue...")
+    
+    def _browse_seasons_hierarchical(self, show_name: str, seasons_dict: Dict, all_episodes: List):
+        """Browse seasons within a show."""
+        while True:
+            self.console.clear()
+            self.console.print()
+            self.console.print(f"📺 {show_name} - Seasons", style="bold green")
+            self.console.print()
+            
+            # Show selection status if any
+            selected_count = len(self.selected_files)
+            if selected_count > 0:
+                selected_size = sum(
+                    episode.file_size 
+                    for episode in all_episodes 
+                    if str(episode.file_path) in self.selected_files
+                )
+                selected_size_gb = selected_size / (1024**3)
+                self.console.print(f"Selected: {selected_count} files • {selected_size_gb:.2f} GB", style="green")
+                self.console.print()
+            
+            # Create seasons table
+            table = Table(show_header=True, header_style="bold blue")
+            table.add_column("#", width=3, justify="right")
+            table.add_column("Season", style="dim")
+            table.add_column("Episodes", justify="center")
+            table.add_column("Total Size", justify="right")
+            table.add_column("Status", justify="center")
+            
+            sorted_seasons = sorted(seasons_dict.keys())
+            
+            for i, season_num in enumerate(sorted_seasons, 1):
+                episodes = seasons_dict[season_num]
+                total_size = sum(ep.file_size for ep in episodes)
+                total_size_gb = total_size / (1024**3)
+                
+                # Season status summary
+                complete_count = sum(1 for ep in episodes if ep.status == FileStatus.COMPLETE)
+                status_text = f"{complete_count}/{len(episodes)}"
+                if complete_count == len(episodes):
+                    status_color = "green"
+                    status_icon = "✅"
+                elif complete_count > 0:
+                    status_color = "yellow"
+                    status_icon = "⚠️"
+                else:
+                    status_color = "red"
+                    status_icon = "❌"
+                
+                season_name = f"Season {season_num}" if season_num > 0 else "Specials"
+                
+                table.add_row(
+                    str(i),
+                    season_name,
+                    str(len(episodes)),
+                    f"{total_size_gb:.2f} GB",
+                    f"{status_icon} {status_text}"
+                )
+            
+            self.console.print(table)
+            self.console.print()
+            
+            self.console.print("Navigation:", style="bold yellow")
+            self.console.print("• Enter season number to browse episodes")
+            self.console.print("• (a)ll episodes in show • (s)elect all in show • (b)ack to shows")
+            self.console.print()
+            
+            command = Prompt.ask("Select season [1-{}] or command".format(len(sorted_seasons)), default="").strip().lower()
+            
+            if command in ["b", "back"]:
+                break
+            elif command == "a":
+                # Show all episodes in this show in flat view
+                show_episodes = [ep for episodes in seasons_dict.values() for ep in episodes]
+                self._browse_episodes_flat(f"{show_name} - All Episodes", show_episodes, all_episodes)
+            elif command == "s":
+                # Select all episodes in this show
+                for episodes in seasons_dict.values():
+                    for episode in episodes:
+                        self.selected_files.add(str(episode.file_path))
+                total_episodes = sum(len(episodes) for episodes in seasons_dict.values())
+                self.console.print(f"✅ Selected all {total_episodes} episodes in {show_name}", style="green")
+                input("Press Enter to continue...")
+            elif command.isdigit():
+                num = int(command)
+                if 1 <= num <= len(sorted_seasons):
+                    selected_season = sorted_seasons[num - 1]
+                    season_episodes = seasons_dict[selected_season]
+                    season_name = f"Season {selected_season}" if selected_season > 0 else "Specials"
+                    title = f"{show_name} - {season_name}"
+                    self._browse_episodes_flat(title, season_episodes, all_episodes)
+                else:
+                    self.console.print("❌ Invalid season number", style="red")
+                    input("Press Enter to continue...")
+            else:
+                if command:  # Only show error if they entered something
+                    self.console.print("❌ Invalid command", style="red")
+                    input("Press Enter to continue...")
+    
+    def _browse_episodes_flat(self, title: str, episodes: List, all_episodes: List):
+        """Browse episodes in flat list with multi-select functionality."""
+        if not episodes:
+            self.console.print("❌ No episodes found", style="red")
+            input("Press Enter to continue...")
+            return
         
         page = 1
-        total_pages = (len(episodes) + self.page_size - 1) // self.page_size
+        page_size = 10
+        total_pages = (len(episodes) + page_size - 1) // page_size
         
         while True:
             self.console.clear()
             self.console.print()
-            self.console.print("📺 Downloaded TV Episodes - Multi-Select Mode", style="bold green")
+            self.console.print(f"📺 {title}", style="bold green")
             self.console.print()
             
             # Show selection status
             selected_count = len(self.selected_files)
-            selected_size = sum(
-                episode.file_size 
-                for episode in episodes 
-                if str(episode.file_path) in self.selected_files
-            )
-            selected_size_gb = selected_size / (1024**3)
-            
             if selected_count > 0:
+                selected_size = sum(
+                    episode.file_size 
+                    for episode in all_episodes 
+                    if str(episode.file_path) in self.selected_files
+                )
+                selected_size_gb = selected_size / (1024**3)
                 self.console.print(f"Selected: {selected_count} files • {selected_size_gb:.2f} GB", style="green")
                 self.console.print()
             
-            # Show summary by show
-            self.console.print("📊 By Show:", style="bold blue")
-            for show_name in sorted_shows[:5]:  # Show first 5 shows
-                show_episodes = shows_dict[show_name]
-                self.console.print(f"  📺 {show_name}: {len(show_episodes)} episodes")
-            
-            if len(sorted_shows) > 5:
-                self.console.print(f"  ... and {len(sorted_shows) - 5} more shows")
-            
-            self.console.print()
-            
-            # Create table
+            # Create episodes table
             table = Table(show_header=True, header_style="bold blue")
             table.add_column("☐", width=3, justify="center")
             table.add_column("#", width=3, justify="right")
-            table.add_column("Show", style="dim")
             table.add_column("Episode", style="dim")
             table.add_column("Size", justify="right")
             table.add_column("Downloaded", justify="right")
             table.add_column("Status", justify="center")
             
             # Calculate page range
-            start_idx = (page - 1) * self.page_size
-            end_idx = min(start_idx + self.page_size, len(episodes))
+            start_idx = (page - 1) * page_size
+            end_idx = min(start_idx + page_size, len(episodes))
             page_episodes = episodes[start_idx:end_idx]
             
             # Add rows
@@ -418,28 +593,26 @@ class DownloadedMediaBrowserInterface:
                 checkbox = "☑️" if is_selected else "☐"
                 row_number = start_idx + i + 1
                 
-                # Extract show and episode info
-                show_name = episode.show_name if hasattr(episode, 'show_name') else "Unknown Show"
-                episode_info = episode.episode_info if hasattr(episode, 'episode_info') else episode.display_name
-                
+                # Episode info
+                episode_info = getattr(episode, 'episode_info', episode.display_name)
                 size = f"{episode.size_gb:.2f} GB"
                 downloaded = episode.download_date.strftime("%Y-%m-%d") if episode.download_date else "Unknown"
                 
                 # Status indicator
                 if episode.status == FileStatus.COMPLETE:
-                    status = "✅ Complete"
+                    status = "✅"
                 elif episode.status == FileStatus.PARTIAL:
-                    status = "⚠️ Partial"
+                    status = "⚠️"
                 elif episode.status == FileStatus.CORRUPTED:
-                    status = "❌ Corrupted"
+                    status = "❌"
                 else:
-                    status = f"❓ {episode.status.value.title()}"
+                    status = "❓"
                 
                 # Dim selected rows
                 style = "dim" if is_selected else None
                 
                 table.add_row(
-                    checkbox, str(row_number), show_name, episode_info, size, downloaded, status,
+                    checkbox, str(row_number), episode_info, size, downloaded, status,
                     style=style
                 )
             
@@ -452,36 +625,34 @@ class DownloadedMediaBrowserInterface:
                 nav_options.append("(p)revious")
             if page < total_pages:
                 nav_options.append("(n)ext")
-            nav_options.extend(["(j)ump to page", "(s)earch"])
+            if total_pages > 1:
+                nav_options.append("(j)ump to page")
             
             action_options = [
-                "(a)ll", "(none)", "(i)nvert", "space to toggle",
-                "(d)elete selected", "(v)erify selected", "(i)nfo selected"
+                "(a)ll on page", "(none)", "(i)nvert page",
+                "(d)elete selected", "(v)erify selected", "(info) selected"
             ]
             
-            self.console.print(f"Navigation: {' • '.join(nav_options)} • Page {page}/{total_pages}")
+            if nav_options:
+                self.console.print(f"Navigation: {' • '.join(nav_options)} • Page {page}/{total_pages}")
             self.console.print(f"Multi-Select: {' • '.join(action_options)}")
-            self.console.print("Actions: (ESC) exit multi-select • (q)uit to main menu")
+            self.console.print("Commands: Enter number to toggle • (b)ack • (q)uit to main menu")
             self.console.print()
             
-            command = Prompt.ask("Select file [1-10], range [1-5], or command", default="").strip().lower()
+            command = Prompt.ask("Select episode [1-10], range [1-5], or command", default="").strip().lower()
             
-            if command in ["q", "quit", "back", "b"]:
-                break
-            elif command in ["esc", "escape", ""]:
+            if command in ["q", "quit"]:
+                return
+            elif command in ["b", "back"]:
                 break
             elif command == "p" and page > 1:
                 page -= 1
             elif command == "n" and page < total_pages:
                 page += 1
-            elif command == "j":
+            elif command == "j" and total_pages > 1:
                 new_page = self._handle_page_jump(total_pages, page)
                 if new_page:
                     page = new_page
-            elif command == "s":
-                # Future: implement search
-                self.console.print("🔍 Search functionality will be implemented next", style="yellow")
-                input("Press Enter to continue...")
             elif command == "a":
                 # Select all on current page
                 for episode in page_episodes:
@@ -505,19 +676,19 @@ class DownloadedMediaBrowserInterface:
                 input("Press Enter to continue...")
             elif command == "d":
                 if self.selected_files:
-                    self._delete_selected_files(episodes)
+                    self._delete_selected_files(all_episodes)
                 else:
                     self.console.print("❌ No files selected", style="red")
                     input("Press Enter to continue...")
             elif command == "v":
                 if self.selected_files:
-                    self._verify_selected_files(episodes)
+                    self._verify_selected_files(all_episodes)
                 else:
                     self.console.print("❌ No files selected", style="red")
                     input("Press Enter to continue...")
             elif command == "info":
                 if self.selected_files:
-                    self._show_selected_info(episodes)
+                    self._show_selected_info(all_episodes)
                 else:
                     self.console.print("❌ No files selected", style="red")
                     input("Press Enter to continue...")
@@ -554,8 +725,57 @@ class DownloadedMediaBrowserInterface:
                     self.console.print("❌ Invalid range format. Use format like '1-5'", style="red")
                     input("Press Enter to continue...")
             else:
-                self.console.print("❌ Invalid command", style="red")
+                if command:  # Only show error if they entered something
+                    self.console.print("❌ Invalid command", style="red")
+                    input("Press Enter to continue...")
+    
+    def _browse_all_episodes_flat(self, all_episodes: List):
+        """Browse all episodes in flat view (original behavior)."""
+        self._browse_episodes_flat("All TV Episodes", all_episodes, all_episodes)
+    
+    def _search_shows(self, shows_dict: Dict, all_episodes: List):
+        """Search through shows."""
+        self.console.print("🔍 Search Shows", style="bold green")
+        self.console.print()
+        
+        query = Prompt.ask("Enter show name to search").strip()
+        if not query:
+            return
+        
+        # Find matching shows
+        query_lower = query.lower()
+        matching_shows = [
+            show_name for show_name in shows_dict.keys()
+            if query_lower in show_name.lower()
+        ]
+        
+        if not matching_shows:
+            self.console.print(f"❌ No shows found matching '{query}'", style="red")
+            input("Press Enter to continue...")
+            return
+        
+        # Show results and let user pick one
+        self.console.print(f"🔍 Found {len(matching_shows)} shows matching '{query}':")
+        self.console.print()
+        
+        for i, show_name in enumerate(matching_shows, 1):
+            seasons_count = len(shows_dict[show_name])
+            episodes_count = sum(len(episodes) for episodes in shows_dict[show_name].values())
+            self.console.print(f"  {i}. {show_name} ({seasons_count} seasons, {episodes_count} episodes)")
+        
+        self.console.print()
+        
+        choice = Prompt.ask(f"Select show [1-{len(matching_shows)}] or press Enter to cancel", default="").strip()
+        
+        if choice.isdigit():
+            num = int(choice)
+            if 1 <= num <= len(matching_shows):
+                selected_show = matching_shows[num - 1]
+                self._browse_seasons_hierarchical(selected_show, shows_dict[selected_show], all_episodes)
+            else:
+                self.console.print("❌ Invalid show number", style="red")
                 input("Press Enter to continue...")
+        # If empty or invalid, just return to previous menu
     
     
     def search_downloaded_content(self, library: MediaLibrary):
