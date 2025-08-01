@@ -102,14 +102,64 @@ class MediaLibrary:
         return sorted(episodes, key=lambda e: (e.season or 0, e.episode or 0))
     
     def search_movies(self, query: str) -> List[MediaItem]:
-        """Search movies by title (case-insensitive)."""
-        query_lower = query.lower()
-        return [m for m in self.movies if query_lower in m.title.lower()]
+        """Search movies by title with fuzzy matching and relevance scoring."""
+        from .search_utils import fuzzy_search_media_items
+        return fuzzy_search_media_items(self.movies, query)
     
     def search_shows(self, query: str) -> List[str]:
-        """Search TV shows by name (case-insensitive)."""
+        """Search TV shows by name with fuzzy matching and relevance scoring."""
+        if not query:
+            return list(self.tv_shows.keys())
+        
         query_lower = query.lower()
-        return [show for show in self.tv_shows.keys() if query_lower in show.lower()]
+        candidates = []
+        
+        for show_name in self.tv_shows.keys():
+            name_lower = show_name.lower()
+            
+            # Calculate similarity scores using the same logic as fuzzy_search_media_items
+            scores = []
+            
+            # Exact match
+            if query_lower == name_lower:
+                scores.append(1.0)
+            elif name_lower.startswith(query_lower):
+                scores.append(0.9)
+            elif f" {query_lower} " in f" {name_lower} ":
+                scores.append(0.85)
+            elif query_lower in name_lower:
+                scores.append(0.7)
+            
+            # Fuzzy matching
+            import difflib
+            similarity = difflib.SequenceMatcher(None, query_lower, name_lower).ratio()
+            scores.append(similarity)
+            
+            # Word-based matching
+            query_words = query_lower.split()
+            name_words = name_lower.split()
+            
+            if query_words and name_words:
+                word_matches = 0
+                for q_word in query_words:
+                    for n_word in name_words:
+                        if q_word == n_word:
+                            word_matches += 1
+                            break
+                        elif q_word in n_word or n_word in q_word:
+                            word_matches += 0.5
+                            break
+                
+                word_score = word_matches / len(query_words)
+                scores.append(word_score)
+            
+            best_score = max(scores) if scores else 0
+            if best_score >= 0.3:
+                candidates.append((show_name, best_score))
+        
+        # Sort by score and return
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return [show for show, score in candidates[:20]]
 
 
 class MediaDiscovery:

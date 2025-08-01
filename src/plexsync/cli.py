@@ -1693,11 +1693,9 @@ def downloaded(ctx, movies, tv, search, orphaned, interactive):
             summary = downloaded_manager.get_summary(library)
             all_files = summary.movies + summary.episodes + summary.orphaned
             
-            # Filter by search query
-            matching_files = [
-                f for f in all_files 
-                if search.lower() in f.display_name.lower()
-            ]
+            # Use fuzzy search with relevance scoring
+            from .search_utils import fuzzy_search_files
+            matching_files = fuzzy_search_files(all_files, search)
             
             if not matching_files:
                 console.print(f"❌ No files found matching '{search}'", style="red")

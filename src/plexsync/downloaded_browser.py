@@ -17,6 +17,7 @@ from rich.panel import Panel
 from rich.columns import Columns
 from rich.text import Text
 
+from .search_utils import fuzzy_search_files
 from .downloaded import (
     DownloadedMediaManager, 
     DownloadedFile, 
@@ -556,6 +557,7 @@ class DownloadedMediaBrowserInterface:
                 self.console.print("❌ Invalid command", style="red")
                 input("Press Enter to continue...")
     
+    
     def search_downloaded_content(self, library: MediaLibrary):
         """Search through downloaded content."""
         self.console.print("🔍 Search Downloaded Content", style="bold green")
@@ -569,11 +571,8 @@ class DownloadedMediaBrowserInterface:
         summary = self.manager.scanner.get_summary(library)
         all_files = summary.movies + summary.episodes + summary.orphaned
         
-        # Filter by search query
-        matching_files = [
-            f for f in all_files 
-            if query.lower() in f.display_name.lower()
-        ]
+        # Use fuzzy search with relevance scoring
+        matching_files = fuzzy_search_files(all_files, query)
         
         if not matching_files:
             self.console.print(f"❌ No files found matching '{query}'", style="red")
